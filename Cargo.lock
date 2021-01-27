@@ -186,6 +186,7 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "delaunator",
+ "js-sys",
  "shapefile",
  "wasm-bindgen",
  "wasm-bindgen-futures",

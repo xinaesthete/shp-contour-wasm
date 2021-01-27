@@ -14,6 +14,8 @@ default = ["console_error_panic_hook"]
 wasm-bindgen = "0.2.63"
 wasm-bindgen-futures = "0.4.19"
 
+js-sys = "0.3.47"
+
 shapefile = {version = "0.2.2", features = ["geo-types"]}
 delaunator = "0.2.0"
 # nb, I had trouble with bzip2 failing to build on Windows, 
@@ -34,7 +36,7 @@ console_error_panic_hook = { version = "0.1.6", optional = true }
 wee_alloc = { version = "0.4.5", optional = true }
 
 [dependencies.web-sys]
-version = "0.3.4"
+version = "0.3.47"
 features = [
   'Headers',
   'Request',
