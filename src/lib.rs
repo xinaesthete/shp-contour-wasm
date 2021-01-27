@@ -30,8 +30,11 @@ pub fn main() -> Result<(), JsValue> {
 pub fn greet(name: &str) {
     alert(&format!("Hello {}, from shp-contour-wasm!", name));
 }
+
+
+
 #[wasm_bindgen]
-pub async fn fetch_shp(url: String) -> Result<JsValue, JsValue> {
+pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     let mut opts = RequestInit::new();
     opts.method("GET");
     opts.mode(RequestMode::Cors); //probably shouldn't need CORS actually
@@ -47,14 +50,61 @@ pub async fn fetch_shp(url: String) -> Result<JsValue, JsValue> {
     let data = JsFuture::from(resp.array_buffer()?).await?;
     //get data into a form readable by other rust methods
     let d = js_sys::Uint8Array::new(&data);
+    // if we used &[u8] rather than vec, it'd already implement Read trait 
+    // (and may be more efficient, living on stack?)
     let v = io::Cursor::new(d.to_vec());
     let reader = io::BufReader::new(v);
     //compute results (should be similar to already implemented code)
-    let _r = shp_main(reader).expect("err");
+    let (geo_3d, triangles) = shp_main(reader).expect("err");
     //marshall results back into JsValues (preferably SharedArrayBuffers)
-    alert(&format!("{} triangles", _r));
+    //perhaps a geometry struct that is also represented in TS
     
-    Ok(data)
+    unsafe {
+        Ok(marshall_geometry_to_js(geo_3d, triangles))
+    }
+}
+
+//wasm_bindgen types cannot have lifetime specifiers
+//also seem to be pretty limited in available types, lots of 'copy is not specified' complaints on pub fields
+//may need getters https://github.com/rustwasm/wasm-bindgen/issues/439
+//for the time-being I may just return an array [geo_3d: Float32Array, triangles: Uint16Array].
+#[wasm_bindgen]
+pub struct MarshallGeometry {
+    geo_3d: js_sys::Float32Array,
+    _triangles: js_sys::Uint32Array
+}
+#[wasm_bindgen]
+impl MarshallGeometry {
+    #[wasm_bindgen(getter)]
+    pub fn coordinates(&self) -> JsValue {
+        JsValue::from(&self.geo_3d)
+    }
+    #[wasm_bindgen(getter)]
+    pub fn triangles(&self) -> JsValue {
+        JsValue::from(&self._triangles)
+    }
+}
+
+//#[wasm_bindgen]
+pub type MarshallGeometryTuple = js_sys::Float32Array;//, js_sys::Uint32Array);
+unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, _triangles: Vec<usize>) -> MarshallGeometry {
+    let geo_js = js_sys::Float32Array::view(&geo_3d);
+    //remember: u16 is not enough, tiles may have >65536 vertices
+    // let tri_u32: [u32; triangles.len()];// = for v in triangles.into_iter() {v as u32}
+    // let tri_js = js_sys::Uint32Array::view(&triangles);
+    let mut tri_vec: Vec<u32> = vec!();
+    for t in _triangles {
+        tri_vec.push(t as u32);
+    }
+    let tri_js = js_sys::Uint32Array::view(&tri_vec);
+
+    //What is a JsValue for?
+    //Representing objects owned by JS.
+    //Is that what we should be outputting?
+    //Perhaps makes sense so we can hand off ownership and allow GC etc as appropriate.
+    //JsValue::from(geo_js)
+    MarshallGeometry{ geo_3d: geo_js, _triangles: tri_js }
+    // JsValue::from(geo_js)
 }
 
 
@@ -63,7 +113,7 @@ struct Contour {
     height: f64
 }
 
-fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<usize, shapefile::Error> {
+fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32>, Vec<usize>), shapefile::Error> {
     //"G:/GIS/OS Terr50/data/su/su67_OST50CONT_20190530.zip"
     let mut contours: Vec<Contour> = Vec::new();
 
@@ -93,50 +143,29 @@ fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<usize, s
         }
     }
 
-    //the JS delaunator was unperturbed by getting 3d points as input: element 3 is ignored.
-    //I don't expect that we can 'extend' delaunator::Point to have an extra element, 
-    //or make another compatible type.
-    //So we might end up having redundant data.
-    //nb in JS 'numbers' are generally 64bit, but what we ultimately want is a Float32Array ready for handing off to threejs.
-    //indeed, we should ideally be able to take a SharedArrayBuffer reference (although there's the issue of not knowing size in advance)
     let mut coordinates: Vec<delaunator::Point> = Vec::new();
-    let mut geo_3d: Vec<f64> = Vec::new();
+    let mut geo_3d: Vec<f32> = Vec::new();
+    //perhaps it'd be better to make an array [f32] after 2d work is done and we know how long it needs to be
     for contour in contours.iter() {
         get_points(&contour, &mut coordinates, &mut geo_3d);
     }
     assert_eq!(coordinates.len()*3, geo_3d.len());
 
     let tri = delaunator::triangulate(&coordinates).expect("No triangulation found.");
-    Ok(tri.len())
+    //winding order should be counter-clockwise for front faces - which should mean three & delaunator match
+    //but in JS had to reverse winding order for some reason (delaunator.js should also be CCW)
+    //If it's necessary to change this, I'll probably do it in combination with casting usize as u32.
+    Ok((geo_3d, tri.triangles))
 }
 
-/* //JS code to port:
-// XXX: nb: I made a very hacky change to shp.js to skip projection.
-function getPoints(featureCol) {
-    return featureCol.features.flatMap(f => {
-        const height = f.properties['PROP_VALUE'];
-        switch(f.geometry.type) {
-            case "Point":
-                return [f.geometry.coordinates.concat(height)];
-            case "MultiLineString":
-                return f.geometry.coordinates.flatMap(cA=>cA.map(c=>c.concat(height)));
-            case "MultiPoint":
-            case "LineString":
-                return f.geometry.coordinates.map(c => c.concat(height));
-            default:
-                return [];
-        }
-    });
-}
-*/
-fn get_points(contour: &Contour, points: &mut Vec<delaunator::Point>, geo_3d: &mut Vec<f64>) {
+fn get_points(contour: &Contour, points: &mut Vec<delaunator::Point>, geo_3d: &mut Vec<f32>) {
     //let geometry = geo_types::Geometry::<f64>::try_from(shape);
     let height: f64 = contour.height;
     
     match &contour.shape {
         shapefile::Shape::Point(p) => {
             points.push(delaunator::Point{ x: p.x, y: p.y });
-            geo_3d.append(&mut vec![p.x, p.y, height]);
+            geo_3d.append(&mut vec![p.x as f32, p.y as f32, height as f32]);
             // geo_3d.push(p.x);
             // geo_3d.push(p.y);
             // geo_3d.push(height);
@@ -145,7 +174,7 @@ fn get_points(contour: &Contour, points: &mut Vec<delaunator::Point>, geo_3d: &m
             for part in line.parts() {
                 for p in part {
                     points.push(delaunator::Point{ x: p.x, y: p.y });
-                    geo_3d.append(&mut vec![p.x, p.y, height]);
+                    geo_3d.append(&mut vec![p.x as f32, p.y as f32, height as f32]);
                     // geo_3d.push(p.x);
                     // geo_3d.push(p.y);
                     // geo_3d.push(height);

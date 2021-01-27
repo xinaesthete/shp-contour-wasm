@@ -14,6 +14,7 @@ pub fn extract_match_to_memory<R: Read + io::Seek>(archive: &mut ZipArchive<R>, 
             if file.name().ends_with(ending) {
                 let mut buffer: Vec<u8> = vec![];
                 let _bytes_read = file.read_to_end(&mut buffer)?;
+                //let arr: &[u8] = &buffer; //works because Vec<T> implements AsRef<[T]>
                 return Ok(io::Cursor::new(buffer));
             }
         }
