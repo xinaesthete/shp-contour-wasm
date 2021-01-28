@@ -109,3 +109,37 @@ impl_window_or_worker! {
 }
 
 //--------------------------------------------
+
+
+#[derive(Debug)]
+pub enum MyError {
+    NoTriangulation(),
+    ShpError(shapefile::Error),
+    ZipError(ZipError)
+}
+
+impl From<shapefile::Error> for MyError {
+    fn from(error: shapefile::Error) -> MyError {
+        MyError::ShpError(error)
+    }
+}
+impl From<ZipError> for MyError {
+    fn from(error: ZipError) -> MyError {
+        MyError::ZipError(error)
+    }
+}
+
+//https://github.com/rustwasm/wasm-bindgen/issues/1742
+// impl<E> From<E> for js_sys::Error where E: std::error::Error {
+//     #[inline]
+//     fn from(value: E) -> js_sys::Error {
+//         js_sys::Error::new(&value.to_string())
+//     }
+// }
+
+
+impl From<MyError> for JsValue {
+    fn from(error: MyError) -> JsValue {
+        JsValue::from(js_sys::Error::new(&format!("{:?}", error)))
+    }
+}

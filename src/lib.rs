@@ -37,6 +37,7 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     let resp_value = JsFuture::from(utils::fetch_with_request(&request)).await?;
     assert!(resp_value.is_instance_of::<Response>());
     let resp: Response = resp_value.dyn_into().unwrap();
+    //TODO: deal with 404 etc.
 
     let data = JsFuture::from(resp.array_buffer()?).await?;
     //get data into a form readable by other rust methods
@@ -44,12 +45,14 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     let v = io::Cursor::new(d.to_vec());
     let reader = io::BufReader::new(v);
     //compute results (should be similar to already implemented code)
-    let (geo_3d, triangles) = shp_main(reader).expect("err");
+    let (geo_3d, triangles) = shp_main(reader)?;
     
     //marshall results back into JsValues (preferably SharedArrayBuffers)
     
     //this is unsafe because we make 'views' of our data in JS typed arrays
     //(as yet, not SharedArrayBuffer, which could be even more unsafe?)
+    //DOMException: Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 
+    //An ArrayBuffer is detached and could not be cloned.
     unsafe {
         Ok(marshall_geometry_to_js(geo_3d, triangles))
     }
@@ -78,12 +81,18 @@ impl MarshallGeometry {
     }
 }
 
-unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, _triangles: Vec<usize>) -> MarshallGeometry {
+unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, triangles: Vec<usize>) -> MarshallGeometry {
     let geo_js = js_sys::Float32Array::view(&geo_3d);
     //remember: u16 is not enough, tiles may have >65536 vertices
     //maybe I could do something quicker here, meh.
     let mut tri_vec: Vec<u32> = vec!();
-    for t in _triangles {
+    //reversing winding as we go (or not)
+    // for i in 0..triangles.len()/3 {
+    //     tri_vec.push(triangles[i*3 + 2] as u32);
+    //     tri_vec.push(triangles[i*3 + 1] as u32);
+    //     tri_vec.push(triangles[i*3 + 0] as u32);
+    // }
+    for t in triangles {
         tri_vec.push(t as u32);
     }
     let tri_js = js_sys::Uint32Array::view(&tri_vec);
@@ -97,21 +106,19 @@ struct Contour {
     height: f64 //could make this f32 sooner rather than later
 }
 
-fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32>, Vec<usize>), shapefile::Error> {
+
+fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32>, Vec<usize>), utils::MyError> {
     let mut contours: Vec<Contour> = Vec::new();
 
-    let mut zip_a = zip::ZipArchive::new(reader)
-        .expect("failed to read as ZipArchive");
+    let mut zip_a = zip::ZipArchive::new(reader)?; //can happen: InvalidArchive("Could not find central directory end")
     
     let types = ["line", "point"];
     for t in types.iter() {
         let shp_p = format!("{}.shp", t);
         let dbf_p = format!("{}.dbf", t);
         
-        let shp = utils::extract_match_to_memory(&mut zip_a, &shp_p)
-            .expect("failed to extract shp");
-        let dbf = utils::extract_match_to_memory(&mut zip_a, &dbf_p)
-            .expect("failed to extract dbf");
+        let shp = utils::extract_match_to_memory(&mut zip_a, &shp_p)?;
+        let dbf = utils::extract_match_to_memory(&mut zip_a, &dbf_p)?;
         
         let mut reader = shapefile::Reader::new(shp)?;
         reader.add_dbf_source(dbf)?;
@@ -134,7 +141,12 @@ fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32
     }
     assert_eq!(coordinates.len()*3, geo_3d.len());
 
-    let tri = delaunator::triangulate(&coordinates).expect("No triangulation found.");
+    // let tri = match delaunator::triangulate(&coordinates) {
+    //     None => Err(utils::MyError::NoTriangulation()),
+    //     Some(t) => t
+    // };
+    let tri = delaunator::triangulate(&coordinates).unwrap();
+    
     //winding order should be counter-clockwise for front faces - which should mean three & delaunator match
     //but in JS had to reverse winding order for some reason (delaunator.js should also be CCW)
     //If it's necessary to change this, I'll probably do it in combination with casting usize as u32.
