@@ -34,15 +34,7 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     let request = Request::new_with_str_and_init(&url, &opts)?;
     request.headers().set("Accept", "application/zip")?;
 
-    //I want a WorkerGlobalScope here in place of window.
-    //made relevant change to Cargo.toml, looks like I'll need something more elaborate to get
-    //WorkerGlobalScope
-    //I only want it to work in worker, but I suppose I could follow this approach
-    //https://github.com/rustwasm/gloo/blob/994d683f64fc04380f495fafb356521f346eff5f/crates/timers/src/callback.rs
-    //to make it still work in window & even also hypothetically extend to work in node.
-    let window = web_sys::window().unwrap();
-    //let global = js_sys::global(); //TODO: add enum wrapper to utils.rs
-    let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+    let resp_value = JsFuture::from(utils::fetch_with_request(&request)).await?;
     assert!(resp_value.is_instance_of::<Response>());
     let resp: Response = resp_value.dyn_into().unwrap();
 
