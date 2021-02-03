@@ -51,5 +51,7 @@ features = [
 wasm-bindgen-test = "0.3.13"
 
 [profile.release]
-# Tell `rustc` to optimize for small code size.
+# "s" tells `rustc` to optimize for small code size, 3 does O3
+# (which is actually slightly smaller at some point?)
+# I'm not so focused on executable size given this'll be churning through lots of data.
 opt-level = "s"

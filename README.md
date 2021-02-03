@@ -1,69 +1,7 @@
-<div align="center">
+# Generates mesh data from Shapefiles
 
-  <h1><code>wasm-pack-template</code></h1>
+This is specifically designed to take data in the form found in Ordnance Survey's "Terrain 50", with contour lines and spot-heights. The format it expects is a zip file containing files with names ending `line.shp`, `line.dbf`, `point.shp`, `point.dbf`. The `dbf` files are expected to define a `PROP_VALUE` field with height information for corresponding `shp` features. I don't expect it to work with (m)any other datasets than the specific one it is written against.
 
-  <strong>A template for kick starting a Rust and WebAssembly project using <a href="https://github.com/rustwasm/wasm-pack">wasm-pack</a>.</strong>
+It has been written in order to learn a bit of the Rust language, and see how it performs relative to an existing JavaScript implementation from a larger project. As of this writing, it seems to be significantly faster and also possibly less reliable (perhaps another part of the system is responsible for this).
 
-  <p>
-    <a href="https://travis-ci.org/rustwasm/wasm-pack-template"><img src="https://img.shields.io/travis/rustwasm/wasm-pack-template.svg?style=flat-square" alt="Build Status" /></a>
-  </p>
-
-  <h3>
-    <a href="https://rustwasm.github.io/docs/wasm-pack/tutorials/npm-browser-packages/index.html">Tutorial</a>
-    <span> | </span>
-    <a href="https://discordapp.com/channels/442252698964721669/443151097398296587">Chat</a>
-  </h3>
-
-  <sub>Built with 🦀🕸 by <a href="https://rustwasm.github.io/">The Rust and WebAssembly Working Group</a></sub>
-</div>
-
-## About
-
-[**📚 Read this template tutorial! 📚**][template-docs]
-
-This template is designed for compiling Rust libraries into WebAssembly and
-publishing the resulting package to NPM.
-
-Be sure to check out [other `wasm-pack` tutorials online][tutorials] for other
-templates and usages of `wasm-pack`.
-
-[tutorials]: https://rustwasm.github.io/docs/wasm-pack/tutorials/index.html
-[template-docs]: https://rustwasm.github.io/docs/wasm-pack/tutorials/npm-browser-packages/index.html
-
-## 🚴 Usage
-
-### 🐑 Use `cargo generate` to Clone this Template
-
-[Learn more about `cargo generate` here.](https://github.com/ashleygwilliams/cargo-generate)
-
-```
-cargo generate --git https://github.com/rustwasm/wasm-pack-template.git --name my-project
-cd my-project
-```
-
-### 🛠️ Build with `wasm-pack build`
-
-```
-wasm-pack build
-```
-
-### 🔬 Test in Headless Browsers with `wasm-pack test`
-
-```
-wasm-pack test --headless --firefox
-```
-
-### 🎁 Publish to NPM with `wasm-pack publish`
-
-```
-wasm-pack publish
-```
-
-## 🔋 Batteries Included
-
-* [`wasm-bindgen`](https://github.com/rustwasm/wasm-bindgen) for communicating
-  between WebAssembly and JavaScript.
-* [`console_error_panic_hook`](https://github.com/rustwasm/console_error_panic_hook)
-  for logging panic messages to the developer console.
-* [`wee_alloc`](https://github.com/rustwasm/wee_alloc), an allocator optimized
-  for small code size.
+A function `fetch_shp(url: string)` is exposed to JavaScript, which will attempt to fetch a zip file from the specified URL and asynchronously return an object with properties `coordinates: Float32Array` and `triangles: Uint32Array` (or an error). This may be extended to include normals, such that they don't need to be computed in JS. Intended for use within a WebWorker but can also work in window context.

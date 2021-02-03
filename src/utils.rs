@@ -102,10 +102,6 @@ macro_rules! impl_window_or_worker {
 
 impl_window_or_worker! {
     fn fetch_with_request(request: &Request) -> Promise;
-    // fn set_timeout_with_callback_and_timeout_and_arguments_0(handler: &Function, timeout: i32) -> Result<i32, JsValue>;
-    // fn set_interval_with_callback_and_timeout_and_arguments_0(handler: &Function, timeout: i32) -> Result<i32, JsValue>;
-    // fn clear_timeout_with_handle(handle: i32);
-    // fn clear_interval_with_handle(handle: i32);
 }
 
 //--------------------------------------------
@@ -115,7 +111,8 @@ impl_window_or_worker! {
 pub enum MyError {
     NoTriangulation(),
     ShpError(shapefile::Error),
-    ZipError(ZipError)
+    ZipError(ZipError),
+    BadResponse(),
 }
 
 impl From<shapefile::Error> for MyError {

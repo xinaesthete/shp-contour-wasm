@@ -37,8 +37,12 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     let resp_value = JsFuture::from(utils::fetch_with_request(&request)).await?;
     assert!(resp_value.is_instance_of::<Response>());
     let resp: Response = resp_value.dyn_into().unwrap();
-    //TODO: deal with 404 etc.
-
+    //deal with 404 etc.
+    if !resp.ok() {
+        //why do I need to be explicit about coercing type here, but "?"" works?
+        return Err(utils::MyError::BadResponse().into());
+    }
+    
     let data = JsFuture::from(resp.array_buffer()?).await?;
     //get data into a form readable by other rust methods
     let d = js_sys::Uint8Array::new(&data);
@@ -82,10 +86,20 @@ impl MarshallGeometry {
 }
 
 unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, triangles: Vec<usize>) -> MarshallGeometry {
+    // let geo = geo_3d.into_boxed_slice();
+    //--- if I make views based on into_boxed_slice(), I get odd bits of geometry
+    //     : the js representation is Array rather than TypedArray
+    //    if I don't, I get occasional errors in JS:
+    //index.js:1 DOMException: Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 
+    //An ArrayBuffer is detached and could not be cloned.
+    //---- BUT::: the graphics look ok.
+
+    //https://github.com/rustwasm/wasm-bindgen/blob/master/examples/raytrace-parallel/src/lib.rs
+    //let mem = wasm_bindgen::memory().unchecked_into::<WebAssembly::Memory>();
     let geo_js = js_sys::Float32Array::view(&geo_3d);
-    //remember: u16 is not enough, tiles may have >65536 vertices
+    //remember: u16 is not always enough, tiles may have >65536 vertices
     //maybe I could do something quicker here, meh.
-    let mut tri_vec: Vec<u32> = vec!();
+    let mut tri_vec: Vec<u32> = Vec::with_capacity(triangles.len());
     //reversing winding as we go (or not)
     // for i in 0..triangles.len()/3 {
     //     tri_vec.push(triangles[i*3 + 2] as u32);
