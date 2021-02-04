@@ -2,10 +2,11 @@ mod utils;
 
 use std::io;
 // use std::io::*; //woe betide
+// use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Request, RequestInit, RequestMode, Response};
+use web_sys::{DedicatedWorkerGlobalScope, Request, RequestInit, RequestMode, Response};
 use shapefile::dbase::*;
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
@@ -20,7 +21,13 @@ pub fn main() -> Result<(), JsValue> {
     Ok(())
 }
 
-
+#[wasm_bindgen]
+pub async fn shp_contour_worker(url: String) -> Result<JsValue, JsValue> {
+    let worker: DedicatedWorkerGlobalScope = js_sys::global().unchecked_into();
+    let result = fetch_shp(url).await?;
+    worker.post_message(&result.into())?;
+    Ok(JsValue::from(true))
+}
 /// Retrieve a shapefile in zip format and return mesh data asynchronously.
 /// (assumes that input is similar to OS Terr 50 data:
 /// each zip having a *line.shp, *line.dbf, *point.shp, *point.dbf
@@ -30,10 +37,10 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     let mut opts = RequestInit::new();
     opts.method("GET");
     opts.mode(RequestMode::Cors); //probably shouldn't need CORS actually
-
+    
     let request = Request::new_with_str_and_init(&url, &opts)?;
     request.headers().set("Accept", "application/zip")?;
-
+    
     let resp_value = JsFuture::from(utils::fetch_with_request(&request)).await?;
     assert!(resp_value.is_instance_of::<Response>());
     let resp: Response = resp_value.dyn_into().unwrap();
@@ -57,6 +64,12 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     //(as yet, not SharedArrayBuffer, which could be even more unsafe?)
     //DOMException: Failed to execute 'postMessage' on 'DedicatedWorkerGlobalScope': 
     //An ArrayBuffer is detached and could not be cloned.
+    // --- ^^^ see shp_contour_worker above for version that calls postMessage directly ^^^
+    // could also hook into onmessage to minimise JS boilerplate
+    // potentially manage worker threads from Rust as well.
+    
+    // utils::console_log!("{} with {}", url, triangles.len()/3);
+    // web_sys::console::log(format!("{} with {}", url, triangles.len()/3));
     unsafe {
         Ok(marshall_geometry_to_js(geo_3d, triangles))
     }

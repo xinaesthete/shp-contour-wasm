@@ -45,6 +45,8 @@ features = [
   'Response',
   'Window',
   'WorkerGlobalScope',
+  'DedicatedWorkerGlobalScope',
+  'console'
 ]
 
 [dev-dependencies]
