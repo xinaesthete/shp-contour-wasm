@@ -21,6 +21,7 @@ delaunator = "0.2.0"
 # nb, I had trouble with bzip2 failing to build on Windows, 
 # "default-features = false" resolves this.
 zip = { version = "0.5.9", default-features = false, features = ["deflate"] }
+nalgebra-glm = "0.3"
 
 # The `console_error_panic_hook` crate provides better debugging of panics by
 # logging them with `console.error`. This is great for development, but requires
@@ -56,4 +57,4 @@ wasm-bindgen-test = "0.3.13"
 # "s" tells `rustc` to optimize for small code size, 3 does O3
 # (which is actually slightly smaller at some point?)
 # I'm not so focused on executable size given this'll be churning through lots of data.
-opt-level = "s"
+opt-level = 3

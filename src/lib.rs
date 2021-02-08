@@ -1,4 +1,5 @@
 mod utils;
+mod math;
 
 use std::io;
 // use std::io::*; //woe betide
@@ -8,6 +9,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{DedicatedWorkerGlobalScope, Request, RequestInit, RequestMode, Response};
 use shapefile::dbase::*;
+use nalgebra_glm::{Vec3, vec3};
 
 // When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
 // allocator.
@@ -25,6 +27,7 @@ pub fn main() -> Result<(), JsValue> {
 pub async fn shp_contour_worker(url: String) -> Result<JsValue, JsValue> {
     let worker: DedicatedWorkerGlobalScope = js_sys::global().unchecked_into();
     let result = fetch_shp(url).await?;
+    // worker.post_message_with_transfer(&result.into())?;
     worker.post_message(&result.into())?;
     Ok(JsValue::from(true))
 }
@@ -58,7 +61,8 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
     //compute results (should be similar to already implemented code)
     let (geo_3d, triangles) = shp_main(reader)?;
     
-    //marshall results back into JsValues (preferably SharedArrayBuffers)
+    //marshall results back into JsValues (preferably SharedArrayBuffers?
+    //not much point if we can transfer without copy)
     
     //this is unsafe because we make 'views' of our data in JS typed arrays
     //(as yet, not SharedArrayBuffer, which could be even more unsafe?)
@@ -81,9 +85,9 @@ pub async fn fetch_shp(url: String) -> Result<MarshallGeometry, JsValue> {
 #[wasm_bindgen]
 pub struct MarshallGeometry {
     geo_3d: js_sys::Float32Array,
-    _triangles: js_sys::Uint32Array,
-    // could compute normals and add them here as well
+    _normals: js_sys::Float32Array,
     // (may consider doing that in JS version as well)
+    _triangles: js_sys::Uint32Array,
     // pub computeTime: f64
 }
 #[wasm_bindgen]
@@ -93,12 +97,16 @@ impl MarshallGeometry {
         JsValue::from(&self.geo_3d)
     }
     #[wasm_bindgen(getter)]
+    pub fn normals(&self) -> JsValue {
+        JsValue::from(&self._normals)
+    }
+    #[wasm_bindgen(getter)]
     pub fn triangles(&self) -> JsValue {
         JsValue::from(&self._triangles)
     }
 }
 
-unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, triangles: Vec<usize>) -> MarshallGeometry {
+unsafe fn marshall_geometry_to_js(mut geo_3d: Vec<Vec3>, triangles: Vec<usize>) -> MarshallGeometry {
     // let geo = geo_3d.into_boxed_slice();
     //--- if I make views based on into_boxed_slice(), I get odd bits of geometry
     //     : the js representation is Array rather than TypedArray
@@ -109,9 +117,16 @@ unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, triangles: Vec<usize>) -> Ma
 
     //https://github.com/rustwasm/wasm-bindgen/blob/master/examples/raytrace-parallel/src/lib.rs
     //let mem = wasm_bindgen::memory().unchecked_into::<WebAssembly::Memory>();
-    let geo_js = js_sys::Float32Array::view(&geo_3d);
+    let len = geo_3d.len() * 3;
+    let mut normals = math::compute_normals(&mut geo_3d, &triangles);
+    let normals_js = js_sys::Float32Array::view_mut_raw(&mut normals[0].x, len);
+    let geo_js = js_sys::Float32Array::view_mut_raw(&mut geo_3d[0].x, len);
+    //-- view_mut_raw should let me avoid a copy if I get it right...
+    // let normals_js = js_sys::Float32Array::view(&math::vvec3_to_f32(&normals));
+    // let geo_js = js_sys::Float32Array::view(&math::vvec3_to_f32(&geo_3d));
     //remember: u16 is not always enough, tiles may have >65536 vertices
     //maybe I could do something quicker here, meh.
+    let len = triangles.len();
     let mut tri_vec: Vec<u32> = Vec::with_capacity(triangles.len());
     //reversing winding as we go (or not)
     // for i in 0..triangles.len()/3 {
@@ -122,9 +137,9 @@ unsafe fn marshall_geometry_to_js(geo_3d: Vec<f32>, triangles: Vec<usize>) -> Ma
     for t in triangles {
         tri_vec.push(t as u32);
     }
-    let tri_js = js_sys::Uint32Array::view(&tri_vec);
+    let tri_js = js_sys::Uint32Array::view_mut_raw(&mut tri_vec[0], len);
 
-    MarshallGeometry{ geo_3d: geo_js, _triangles: tri_js }
+    MarshallGeometry{ geo_3d: geo_js, _normals: normals_js, _triangles: tri_js }
 }
 
 
@@ -134,7 +149,7 @@ struct Contour {
 }
 
 
-fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32>, Vec<usize>), utils::MyError> {
+fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<Vec3>, Vec<usize>), utils::MyError> {
     let mut contours: Vec<Contour> = Vec::new();
 
     let mut zip_a = zip::ZipArchive::new(reader)?; //can happen: InvalidArchive("Could not find central directory end")
@@ -161,12 +176,12 @@ fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32
     }
 
     let mut coordinates: Vec<delaunator::Point> = Vec::new();
-    let mut geo_3d: Vec<f32> = Vec::new();
+    let mut geo_3d: Vec<Vec3> = Vec::new();
     //perhaps it'd be better to make an array [f32] after 2d work is done and we know how long it needs to be
     for contour in contours.iter() {
         get_points(&contour, &mut coordinates, &mut geo_3d);
     }
-    assert_eq!(coordinates.len()*3, geo_3d.len());
+    assert_eq!(coordinates.len(), geo_3d.len());
 
     // let tri = match delaunator::triangulate(&coordinates) {
     //     None => Err(utils::MyError::NoTriangulation()),
@@ -180,19 +195,19 @@ fn shp_main<R: io::Read + io::Seek>(reader: io::BufReader<R>) -> Result<(Vec<f32
     Ok((geo_3d, tri.triangles))
 }
 
-fn get_points(contour: &Contour, points: &mut Vec<delaunator::Point>, geo_3d: &mut Vec<f32>) {
+fn get_points(contour: &Contour, points: &mut Vec<delaunator::Point>, geo_3d: &mut Vec<Vec3>) {
     let height: f64 = contour.height;
     
     match &contour.shape {
         shapefile::Shape::Point(p) => {
             points.push(delaunator::Point{ x: p.x, y: p.y });
-            geo_3d.append(&mut vec![p.x as f32, p.y as f32, height as f32]);
+            geo_3d.push(vec3(p.x as f32, p.y as f32, height as f32));
         },
         shapefile::Shape::Polyline(line) => {
             for part in line.parts() {
                 for p in part {
                     points.push(delaunator::Point{ x: p.x, y: p.y });
-                    geo_3d.append(&mut vec![p.x as f32, p.y as f32, height as f32]);
+                    geo_3d.push(vec3(p.x as f32, p.y as f32, height as f32));
                 }
             }
         }
